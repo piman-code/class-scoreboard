@@ -1,0 +1,10 @@
+{
+  "name": "class-scoreboard",
+  "private": true,
+  "type": "module",
+  "description": "학급 단합대회 실시간 점수 전광판 (좀비게임 · 꼬리잡기 · 피구)",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "start": "python3 -m http.server 8080"
+  }
+}

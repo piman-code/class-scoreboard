@@ -1,0 +1,10 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "board": {
+      ".read": true,
+      ".write": "auth != null && auth.token.email == 'class-scoreboard-admin@example.com'"
+    }
+  }
+}
