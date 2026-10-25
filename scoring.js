@@ -4,6 +4,8 @@
 // 꼬리잡기  6팀이 한 판에 모두 참여, 3경기, 10분. 남은 인원 최다 팀 40점(공동 1위 모두),
 //           시간 안에 나머지를 모두 전멸시키면 60점, 그 밖의 팀 10점
 // 피구      팀당 한 번씩 3경기. 승리팀 60점, 패배팀 20점
+// 추가 종목 대회 중에 관리자가 만드는 종목. 이름을 정하고 팀별 점수를 직접 넣는다
+// 보너스    노래·댄스·개인 활약 같은 즉석 점수. 팀, 점수(감점도 가능), 사유를 한 줄로 남긴다
 
 export const T = [0, 1, 2, 3, 4, 5];
 
@@ -19,9 +21,17 @@ export function defaultState() {
     zombie: T.map(i => ({ tagger: i, surv: {} })),
     tail: [0, 1, 2].map(() => ({ surv: {} })),
     dodge: [{ a: 0, b: 5, w: null }, { a: 1, b: 4, w: null }, { a: 2, b: 3, w: null }],
+    // { name, pts: { t0: 30, t3: 10, ... } }. 넣지 않은 팀은 0점
+    extras: [],
+    // { team, pts, note } 최근 것이 뒤
+    bonus: [],
     timer: { dur: 480, left: 480, endsAt: null, label: '좀비게임 1경기' },
   };
 }
+
+export const MAX_EXTRAS = 10;
+export const MAX_BONUS = 100;
+export const extraPts = (x, i) => (x.pts && Number.isFinite(x.pts['t' + i]) ? x.pts['t' + i] : null);
 
 // 저장소에서 읽은 값을 언제나 완전한 모양으로 맞춘다 (Firebase 는 빈 객체·빈 배열·null 을 지운다)
 export function normalize(d) {
@@ -48,6 +58,12 @@ export function normalize(d) {
       a: idx(m && m.a, base.dodge[k].a), b: idx(m && m.b, base.dodge[k].b),
       w: m && (m.w === 'a' || m.w === 'b') ? m.w : null,
     })),
+    extras: (d.extras ? Object.values(d.extras) : []).filter(x => x && typeof x === 'object').slice(0, MAX_EXTRAS)
+      .map((x, k) => ({ name: (typeof x.name === 'string' && x.name) || '추가 종목 ' + (k + 1), pts: surv(x.pts) })),
+    bonus: (d.bonus ? Object.values(d.bonus) : [])
+      .filter(b => b && Number.isInteger(b.team) && b.team >= 0 && b.team < 6 && Number.isFinite(b.pts))
+      .slice(-MAX_BONUS)
+      .map(b => ({ team: b.team, pts: b.pts, note: typeof b.note === 'string' ? b.note : '' })),
     timer: Object.assign(base.timer, d.timer || {}, { endsAt: (d.timer && d.timer.endsAt) || null }),
   };
 }
@@ -76,7 +92,7 @@ export function tailResult(g) {
 }
 
 export function scores(s) {
-  const out = s.teams.map(() => ({ zombie: 0, tail: 0, dodge: 0, total: 0 }));
+  const out = s.teams.map(() => ({ zombie: 0, tail: 0, dodge: 0, extra: 0, total: 0 }));
   s.zombie.forEach(g => {
     if (!zombieStarted(g)) return;
     out[g.tagger].zombie += 2 * zombieCaught(g, s.teams);
@@ -91,7 +107,10 @@ export function scores(s) {
     out[m.w === 'a' ? m.a : m.b].dodge += 60;
     out[m.w === 'a' ? m.b : m.a].dodge += 20;
   });
-  out.forEach(o => { o.total = o.zombie + o.tail + o.dodge; });
+  // 전광판에서는 추가 종목과 보너스를 "추가" 한 칸으로 합쳐 보여 준다
+  (s.extras || []).forEach(x => T.forEach(i => { out[i].extra += extraPts(x, i) || 0; }));
+  (s.bonus || []).forEach(b => { out[b.team].extra += b.pts; });
+  out.forEach(o => { o.total = o.zombie + o.tail + o.dodge + o.extra; });
   return out;
 }
 

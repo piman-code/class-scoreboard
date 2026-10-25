@@ -62,3 +62,21 @@ test('Firebase가 빈 값을 지운 데이터도 완전한 모양으로 복원�
 test('명단 입력은 줄바꿈과 쉼표로 나눈다', () => {
   assert.deepEqual(parseMembers('김민준\n 이서연 ,박지호,,\n'), ['김민준', '이서연', '박지호']);
 });
+
+test('추가 종목: 팀별로 넣은 점수가 더해지고, 안 넣은 팀은 0점', () => {
+  const s = defaultState();
+  s.extras = [{ name: '이어달리기', pts: { t0: 50, t2: 30 } }];
+  assert.deepEqual(scores(s).map(x => x.extra), [50, 0, 30, 0, 0, 0]);
+});
+
+test('보너스: 노래·댄스 점수와 감점이 그 팀 합계에 반영된다', () => {
+  const s = defaultState();
+  s.bonus = [{ team: 1, pts: 10, note: '노래' }, { team: 1, pts: 20, note: '댄스' }, { team: 4, pts: -5, note: '반칙' }];
+  assert.deepEqual(totals(s), [0, 30, 0, 0, -5, 0]);
+});
+
+test('Firebase에서 읽은 추가 종목·보너스를 정리한다', () => {
+  const s = normalize({ teams: [], extras: { 0: { name: '줄넘기', pts: { t3: 40, t9: 99 } } }, bonus: [{ team: 2, pts: 5 }, { team: 7, pts: 5 }, null] });
+  assert.deepEqual(s.extras, [{ name: '줄넘기', pts: { t3: 40 } }]);
+  assert.deepEqual(s.bonus, [{ team: 2, pts: 5, note: '' }]);
+});

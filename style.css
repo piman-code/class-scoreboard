@@ -92,6 +92,10 @@ button { cursor: pointer; }
 .prog li .chip.lose { opacity: .4; }
 .prog li .chip.win { color: var(--led); }
 .prog li .chips { display: flex; gap: 10px; min-width: 0; overflow: hidden; }
+.progress.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.prog li.x { grid-template-columns: minmax(0, 4.5em) minmax(0, 1fr) auto; }
+.prog li.x em { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.prog li.x .res { max-width: 9em; overflow: hidden; text-overflow: ellipsis; }
 .prog .note { margin: 6px 0 0; font-size: clamp(11px, 1.05vw, 15px); color: var(--muted); }
 .keys { color: var(--muted); font-size: 12px; text-align: center; }
 .keys kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-family: var(--body); }
@@ -151,6 +155,15 @@ textarea { width: 100%; resize: vertical; min-height: 92px; line-height: 1.5; }
 .btn { border-radius: 8px; padding: 8px 14px; font-weight: 700; background: var(--panel-2); border: 1px solid var(--line); }
 .btn.primary { background: var(--led); color: #1a1200; border-color: var(--led); }
 .btn.danger { color: var(--bad); }
+.bonusform { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.bonusform #b-pts { width: 84px; }
+.bonusform #b-note { flex: 1; min-width: 180px; }
+.presets { display: flex; gap: 4px; }
+.presets button[aria-pressed="true"] { background: var(--led); color: #1a1200; border-color: var(--led); }
+.blist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.blist li { display: grid; grid-template-columns: minmax(0, 8em) 3.5em minmax(0, 1fr) auto auto; gap: 8px; align-items: center; background: var(--panel-2); border-radius: 8px; padding: 6px 10px; }
+.blist li b { color: var(--led); text-align: right; }
+.blist li span:not(.chip) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .adminbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 @media (max-width: 720px) {
@@ -162,6 +175,8 @@ textarea { width: 100%; resize: vertical; min-height: 92px; line-height: 1.5; }
   .tname b { font-size: 22px; }
   .progress { grid-template-columns: 1fr; }
   .keys, #fs { display: none; }
+  .blist li { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+  .blist li span:not(.chip) { grid-column: 1 / -1; grid-row: 2; white-space: normal; }
 }
 @media (prefers-reduced-motion: reduce) {
   .row, .row::before { transition: none; }

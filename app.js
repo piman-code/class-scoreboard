@@ -2,6 +2,7 @@ import { firebaseConfig, ADMIN_EMAIL } from './firebase-config.js';
 import {
   T, sv, defaultState, normalize, teamSize, scores, tailResult,
   zombieDone, zombieStarted, zombieCaught, pairingOk, drawPairs, parseMembers,
+  extraPts, MAX_EXTRAS, MAX_BONUS,
 } from './scoring.js';
 
 const FB = 'https://www.gstatic.com/firebasejs/10.12.2/';
@@ -129,25 +130,27 @@ function renderBoard() {
   const sc = scores(state);
   const order = T.slice().sort((a, b) => sc[b].total - sc[a].total || a - b);
   const max = Math.max(1, ...sc.map(s => s.total));
+  const hasExtra = state.extras.length > 0 || state.bonus.length > 0;
   const box = $('b-ranks');
   T.forEach(i => {
     let row = box.querySelector('[data-team="' + i + '"]');
     if (!row) {
       row = document.createElement('div'); row.className = 'row'; row.dataset.team = i;
       row.innerHTML = '<div class="rank"></div><div class="tname"><span class="bib"></span><div><b></b><div class="mini"></div></div></div>' +
-        '<div class="parts"><div class="part"><small>좀비</small><span data-k="zombie"></span></div><div class="part"><small>꼬리잡기</small><span data-k="tail"></span></div><div class="part"><small>피구</small><span data-k="dodge"></span></div></div>' +
+        '<div class="parts"><div class="part"><small>좀비</small><span data-k="zombie"></span></div><div class="part"><small>꼬리잡기</small><span data-k="tail"></span></div><div class="part"><small>피구</small><span data-k="dodge"></span></div><div class="part" data-extra><small>추가</small><span data-k="extra"></span></div></div>' +
         '<div class="total"></div>';
       box.appendChild(row);
     }
     const s = sc[i], rank = 1 + sc.filter(x => x.total > s.total).length;
     row.style.setProperty('--pos', order.indexOf(i));
     row.style.setProperty('--tc', COLORS[i]);
-    row.style.setProperty('--fill', (s.total / max * 100) + '%');
+    row.style.setProperty('--fill', (Math.max(0, s.total) / max * 100) + '%');
     row.dataset.rank = s.total > 0 ? rank : '';
     row.querySelector('.rank').textContent = rank;
     row.querySelector('.tname b').textContent = state.teams[i].name;
-    row.querySelector('.mini').textContent = '좀비 ' + s.zombie + ' · 꼬리 ' + s.tail + ' · 피구 ' + s.dodge;
-    ['zombie', 'tail', 'dodge'].forEach(k => { row.querySelector('[data-k="' + k + '"]').textContent = s[k]; });
+    row.querySelector('.mini').textContent = '좀비 ' + s.zombie + ' · 꼬리 ' + s.tail + ' · 피구 ' + s.dodge + (hasExtra ? ' · 추가 ' + s.extra : '');
+    row.querySelector('[data-extra]').hidden = !hasExtra;
+    ['zombie', 'tail', 'dodge', 'extra'].forEach(k => { row.querySelector('[data-k="' + k + '"]').textContent = s[k]; });
     const tot = row.querySelector('.total');
     if (tot.textContent !== String(s.total)) {
       tot.textContent = s.total;
@@ -173,10 +176,23 @@ function renderBoard() {
     return '<li>' + chip(m.a, cls(m.a)) + '<em>vs</em>' + chip(m.b, cls(m.b)) + '<span class="res' + (m.w ? ' on' : '') + '">' + (m.w ? '승' : '대기') + '</span></li>';
   }).join('');
   const count = (arr, f) => arr.filter(f).length + ' / ' + arr.length;
+  // 추가 종목은 1등 팀, 보너스는 최근 것부터
+  const signed = n => (n > 0 ? '+' : '') + n;
+  const xList = state.extras.map(x => {
+    const best = Math.max(...T.map(i => extraPts(x, i) || 0));
+    const tops = best > 0 ? T.filter(i => extraPts(x, i) === best) : [];
+    return '<li class="z x"><em>' + esc(x.name) + '</em>' +
+      (tops.length ? '<span class="chips">' + tops.map(i => chip(i, ' win')).join('') + '</span>' : '<span class="chip" style="color:var(--muted)">진행 전</span>') +
+      '<span class="res' + (tops.length ? ' on' : '') + '">' + (tops.length ? signed(best) : '') + '</span></li>';
+  }).join('');
+  const bList = state.bonus.slice(-4).reverse().map(b =>
+    '<li class="z x"><em>보너스</em>' + chip(b.team) + '<span class="res on">' + signed(b.pts) + (b.note ? ' ' + esc(b.note) : '') + '</span></li>').join('');
+  $('b-progress').classList.toggle('four', hasExtra);
   $('b-progress').innerHTML =
     '<div class="prog"><h3><span>좀비게임 · 8분</span><span class="num">' + count(state.zombie, g => zombieDone(g, state.teams)) + '</span></h3><ul>' + zList + '</ul><p class="note">술래: 잡은 사람당 2 · 생존: 1명당 5</p></div>' +
     '<div class="prog"><h3><span>꼬리잡기 · 10분 · 6팀 동시</span><span class="num">' + count(state.tail, g => tailResult(g)) + '</span></h3><ul>' + tList + '</ul><p class="note">남은 인원 최다 40 · 모두 전멸시키면 60 · 나머지 10</p></div>' +
-    '<div class="prog"><h3><span>피구 대진표</span><span class="num">' + count(state.dodge, m => m.w) + '</span></h3><ul>' + dList + '</ul><p class="note">승 60 · 패 20</p></div>';
+    '<div class="prog"><h3><span>피구 대진표</span><span class="num">' + count(state.dodge, m => m.w) + '</span></h3><ul>' + dList + '</ul><p class="note">승 60 · 패 20</p></div>' +
+    (hasExtra ? '<div class="prog"><h3><span>추가 종목 · 보너스</span><span class="num">' + state.bonus.length + '건</span></h3><ul>' + xList + bList + '</ul></div>' : '');
   $('b-keys').hidden = !isAdmin;
 }
 
@@ -197,7 +213,9 @@ const stepper = (act, gi, i, v) =>
   '<button data-act="' + act + '" data-g="' + gi + '" data-t="' + i + '" data-d="1" aria-label="' + esc(state.teams[i].name) + ' 1명 더하기">+</button></span>';
 
 // 확인이 필요한 버튼(초기화·재추첨)은 시간 제한 없이 화면 안에서 "지우기 / 취소"를 고르게 한다
-let confirming = null; // null | 'reset' | 'draw'
+let confirming = null; // null | 'reset' | 'draw' | 'b<번호>'(보너스 삭제) | 'x<번호>'(추가 종목 삭제)
+// 보너스 입력칸은 점수에 들어가기 전이라 화면을 다시 그려도 남도록 따로 들고 있는다
+let bonusDraft = { team: 0, pts: 10, note: '' };
 let pointerDown = false, adminPending = false;
 document.addEventListener('pointerdown', () => { pointerDown = true; }, true);
 const pointerEnd = () => setTimeout(() => { pointerDown = false; if (adminPending) renderAdmin(); }, 0);
@@ -205,7 +223,9 @@ document.addEventListener('pointerup', pointerEnd, true);
 document.addEventListener('pointercancel', pointerEnd, true);
 
 // 입력칸 하나를 화면이 다시 그려져도 다시 찾을 수 있게 하는 이름
-const fieldKey = x => x.id || (x.dataset.team !== undefined ? 'team' + x.dataset.team + x.dataset.f : null);
+const fieldKey = x => x.id
+  || (x.dataset.team !== undefined ? 'team' + x.dataset.team + x.dataset.f : null)
+  || (x.dataset.x !== undefined ? 'x' + x.dataset.x + (x.dataset.f || 't' + x.dataset.t) : null);
 
 function renderAdmin() {
   const el = $('admin');
@@ -258,6 +278,23 @@ function adminHtml() {
     '<button class="small" data-act="t-add" data-v="60">+1분</button><button class="small" data-act="t-add" data-v="-60">−1분</button></div>' +
     '<label class="line"><span class="rule">전광판 표시 문구</span><input type="text" id="t-label" value="' + esc(t.label) + '" maxlength="30" style="flex:1;max-width:320px"></label></section>';
 
+  // 보너스: 노래·댄스·개인 활약처럼 즉석에서 주는 점수
+  const bd = bonusDraft;
+  h += '<section class="block"><header><h2>보너스 점수</h2><span class="rule">노래·댄스·개인 활약 등 즉석 점수 · 감점은 −5처럼 넣으세요</span></header>' +
+    '<div class="bonusform"><select id="b-team" aria-label="보너스 받을 팀">' + teamOptions(bd.team) + '</select>' +
+    '<span class="presets">' + [5, 10, 20, 30, -5].map(v => '<button class="small" data-act="b-preset" data-v="' + v + '" aria-pressed="' + (bd.pts === v) + '">' + (v > 0 ? '+' : '−') + Math.abs(v) + '</button>').join('') + '</span>' +
+    '<input type="number" id="b-pts" value="' + bd.pts + '" step="5" min="-999" max="999" aria-label="보너스 점수">' +
+    '<input type="text" id="b-note" value="' + esc(bd.note) + '" maxlength="30" placeholder="사유 (예: 김민준 노래)" aria-label="보너스 사유">' +
+    '<button class="btn primary" data-act="b-add">보너스 주기</button></div>';
+  if (state.bonus.length) {
+    h += '<ul class="blist">' + state.bonus.map((b, k) => ({ b, k })).reverse().map(({ b, k }) =>
+      '<li>' + chip(b.team) + '<b class="num">' + (b.pts > 0 ? '+' : '') + b.pts + '</b><span>' + esc(b.note || '사유 없음') + '</span>' +
+      (confirming === 'b' + k
+        ? '<button class="small" data-act="b-del-yes" data-k="' + k + '" style="color:var(--bad)">지우기</button><button class="small" data-act="cancel">취소</button>'
+        : '<button class="small" data-act="b-del" data-k="' + k + '">삭제</button>') + '</li>').join('') + '</ul>';
+  }
+  h += '</section>';
+
   h += '<section class="block"><header><h2>좀비게임</h2><span class="rule">경기 끝나고 팀별 생존 인원을 넣으세요 · 술래팀 잡은 사람당 2점 · 생존자 1명당 5점</span></header><div class="grid">';
   state.zombie.forEach((g, gi) => {
     const caught = zombieCaught(g, state.teams);
@@ -292,6 +329,23 @@ function adminHtml() {
   });
   h += '</div></section>';
 
+  // 추가 종목: 대회 중에 새로 하는 게임. 이름과 팀별 점수를 직접 넣는다
+  h += '<section class="block"><header><h2>추가 종목</h2><span class="rule">대회 중에 새로 하는 게임 · 이름을 정하고 팀별 점수를 넣으면 합계에 더해집니다</span></header><div class="grid">';
+  state.extras.forEach((x, k) => {
+    h += '<div class="card"><label class="line"><input type="text" data-x="' + k + '" data-f="name" value="' + esc(x.name) + '" maxlength="16" aria-label="추가 종목 이름" style="flex:1;font-weight:700">' +
+      (confirming === 'x' + k
+        ? '<button class="small" data-act="x-del-yes" data-k="' + k + '" style="color:var(--bad)">지우기</button><button class="small" data-act="cancel">취소</button>'
+        : '<button class="small" data-act="x-del" data-k="' + k + '">종목 삭제</button>') + '</label>';
+    T.forEach(i => {
+      const v = extraPts(x, i);
+      h += '<label class="line">' + chip(i) + '<span><input type="number" data-x="' + k + '" data-t="' + i + '" value="' + (v === null ? '' : v) + '" placeholder="0" step="5" min="-999" max="999" style="width:84px" aria-label="' + esc(state.teams[i].name) + ' 점수"> 점</span></label>';
+    });
+    h += '</div>';
+  });
+  h += '</div><div>' + (state.extras.length < MAX_EXTRAS
+    ? '<button class="btn" data-act="x-add">+ 추가 종목 만들기</button>'
+    : '<span class="rule">추가 종목은 ' + MAX_EXTRAS + '개까지 만들 수 있어요</span>') + '</div></section>';
+
   h += '<section class="block"><header><h2>팀 · 명단 설정</h2><span class="rule">명단을 넣으면 그 인원수로 좀비게임·꼬리잡기 인원을 셉니다 · 명단은 학생 화면에 공개됩니다</span></header>' +
     '<label class="line"><span class="rule">대회 이름</span><input type="text" id="cfg-title" value="' + esc(state.title) + '" maxlength="30" style="flex:1;max-width:360px"></label><div class="teams">';
   state.teams.forEach((tm, i) => {
@@ -304,7 +358,7 @@ function adminHtml() {
   });
   h += '</div><div class="line" style="justify-content:flex-start;flex-wrap:wrap">' +
     (confirming === 'reset'
-      ? '<span class="rule" style="color:var(--fg)">좀비게임·꼬리잡기·피구 결과와 타이머를 모두 지울까요?</span><button class="btn danger" data-act="reset-yes">모두 지우기</button><button class="btn" data-act="cancel">취소</button>'
+      ? '<span class="rule" style="color:var(--fg)">좀비게임·꼬리잡기·피구 결과, 추가 종목 점수, 보너스, 타이머를 모두 지울까요?</span><button class="btn danger" data-act="reset-yes">모두 지우기</button><button class="btn" data-act="cancel">취소</button>'
       : '<button class="btn danger" data-act="reset">모든 점수 초기화</button>') +
     '<span class="rule">팀 이름과 명단은 남습니다</span></div></section>';
   return h;
@@ -341,11 +395,34 @@ adminEl.addEventListener('click', e => {
     else g.surv['t' + i] = v !== null ? Math.min(n, Math.max(0, v + d)) : (d > 0 ? n : 0);
   };
   if (act === 'cancel') { confirming = null; renderAdmin(); return; }
+  if (act === 'b-preset') { bonusDraft.pts = +b.dataset.v; renderAdmin(); return; }
+  if (act === 'b-add') {
+    const note = ($('b-note') ? $('b-note').value : bonusDraft.note).trim().slice(0, 30);
+    const pts = Math.round(+($('b-pts') ? $('b-pts').value : bonusDraft.pts));
+    if (!pts) { setFlash('보너스 점수를 넣어 주세요.', true); renderAdmin(); return; }
+    const team = +($('b-team') ? $('b-team').value : bonusDraft.team);
+    state.bonus = state.bonus.concat({ team, pts: Math.max(-999, Math.min(999, pts)), note }).slice(-MAX_BONUS);
+    // 사유 칸에 커서가 있으면 다시 그릴 때 쓰던 글이 되살아나므로 먼저 빠져나온다
+    if (adminEl.contains(document.activeElement)) document.activeElement.blur();
+    bonusDraft = { team, pts, note: '' };
+    save(state.teams[team].name + ' ' + (pts > 0 ? '+' : '') + pts + '점' + (note ? ' (' + note + ')' : ''));
+    return;
+  }
+  if (act === 'b-del') { confirming = 'b' + b.dataset.k; renderAdmin(); return; }
+  if (act === 'b-del-yes') { confirming = null; state.bonus.splice(+b.dataset.k, 1); save('보너스를 지웠습니다.'); return; }
+  if (act === 'x-add') {
+    state.extras = state.extras.concat({ name: '추가 종목 ' + (state.extras.length + 1), pts: {} });
+    save('추가 종목을 만들었습니다. 이름과 팀별 점수를 넣으세요.');
+    return;
+  }
+  if (act === 'x-del') { confirming = 'x' + b.dataset.k; renderAdmin(); return; }
+  if (act === 'x-del-yes') { confirming = null; state.extras.splice(+b.dataset.k, 1); save('추가 종목을 지웠습니다.'); return; }
   if (act === 'reset') { confirming = 'reset'; renderAdmin(); return; }
   if (act === 'draw' && state.dodge.some(m => m.w)) { confirming = 'draw'; renderAdmin(); return; }
   if (act === 'reset-yes') {
     confirming = null;
-    state = Object.assign(defaultState(), { title: state.title, teams: state.teams });
+    // 추가 종목은 이름만 남기고 점수를 비운다
+    state = Object.assign(defaultState(), { title: state.title, teams: state.teams, extras: state.extras.map(x => ({ name: x.name, pts: {} })) });
     save('모든 점수를 지웠습니다.');
     return;
   }
@@ -373,6 +450,16 @@ adminEl.addEventListener('click', e => {
 
 adminEl.addEventListener('change', e => {
   const x = e.target; if (!isAdmin) return;
+  if (x.id === 'b-team') { bonusDraft.team = +x.value; return; }
+  if (x.id === 'b-pts') { bonusDraft.pts = Math.round(+x.value) || 0; return; }
+  if (x.id === 'b-note') { bonusDraft.note = x.value.slice(0, 30); return; }
+  if (x.dataset.x !== undefined) {
+    const xe = state.extras[+x.dataset.x];
+    if (x.dataset.f === 'name') xe.name = x.value.trim().slice(0, 16) || '추가 종목 ' + (+x.dataset.x + 1);
+    else if (x.value.trim() === '') delete xe.pts['t' + x.dataset.t];
+    else xe.pts['t' + x.dataset.t] = Math.max(-999, Math.min(999, Math.round(+x.value) || 0));
+    setTimeout(save, 0); return;
+  }
   if (x.dataset.z !== undefined) { const g = state.zombie[+x.dataset.z]; g.tagger = +x.value; delete g.surv['t' + g.tagger]; }
   else if (x.dataset.m !== undefined) state.dodge[+x.dataset.m][x.dataset.f] = +x.value;
   else if (x.dataset.team !== undefined) {
@@ -384,9 +471,16 @@ adminEl.addEventListener('change', e => {
   else if (x.id === 'cfg-title') state.title = x.value.trim().slice(0, 30) || '학급 단합대회';
   else if (x.id === 't-label') state.timer.label = x.value.trim().slice(0, 30);
   else return;
-  x.blur(); save();
+  // Tab 으로 다음 칸에 갈 때는 change 가 커서가 옮겨 가기 직전에 온다. 이때 화면을 갈아 끼우면
+  // 옮겨 갈 칸이 사라져 커서를 잃으므로, 커서가 옮겨 간 뒤에 저장하고 다시 그린다
+  setTimeout(save, 0);
 });
-adminEl.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input[type="text"], input[type="number"]')) e.target.blur(); });
+adminEl.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !e.target.matches('input[type="text"], input[type="number"]')) return;
+  // 보너스 칸에서 Enter 는 바로 "보너스 주기"
+  if (e.target.id === 'b-note' || e.target.id === 'b-pts') { e.preventDefault(); const add = adminEl.querySelector('[data-act="b-add"]'); if (add) add.click(); return; }
+  e.target.blur();
+});
 
 /* ---------- 탭 · 전체 화면 · 단축키 ---------- */
 function show(v) {
