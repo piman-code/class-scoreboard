@@ -27,13 +27,28 @@ function setSync(live, text) {
   $('synctext').textContent = text;
 }
 
-function save() {
+// 점수 입력 화면 위쪽에 잠깐 띄우는 안내 (저장 실패는 사라지지 않게 둔다)
+let flash = null, flashTimer = null;
+function setFlash(text, bad) {
+  flash = { text, bad: !!bad };
+  clearTimeout(flashTimer);
+  if (!bad) flashTimer = setTimeout(() => { flash = null; renderAdmin(); }, 3000);
+}
+
+function save(doneText) {
   if (!isAdmin) return;
   if (mode === 'firebase') {
     fb.set(fb.ref(fb.db, 'board'), JSON.parse(JSON.stringify(state)))
-      .catch(e => setSync(false, e && e.code === 'PERMISSION_DENIED' ? '저장 권한 없음 · 다시 로그인하세요' : '저장 실패 · 인터넷 연결을 확인하세요'));
+      .then(() => { if (doneText) { setFlash(doneText); renderAdmin(); } })
+      .catch(e => {
+        setFlash(e && e.code === 'PERMISSION_DENIED'
+          ? '저장되지 않았어요. 관리자 권한이 없습니다. 로그아웃 후 다시 로그인하세요.'
+          : '저장되지 않았어요. 인터넷 연결을 확인하고 다시 눌러 주세요.', true);
+        renderAdmin();
+      });
   } else {
     try { localStorage.setItem(LS, JSON.stringify(state)); } catch (e) {}
+    if (doneText) setFlash(doneText);
   }
   render();
 }
@@ -181,25 +196,59 @@ const stepper = (act, gi, i, v) =>
   '<output>' + (v === null ? '–' : v) + '</output>' +
   '<button data-act="' + act + '" data-g="' + gi + '" data-t="' + i + '" data-d="1" aria-label="' + esc(state.teams[i].name) + ' 1명 더하기">+</button></span>';
 
-let resetArmed = false, drawArmed = false;
+// 확인이 필요한 버튼(초기화·재추첨)은 시간 제한 없이 화면 안에서 "지우기 / 취소"를 고르게 한다
+let confirming = null; // null | 'reset' | 'draw'
+let pointerDown = false, adminPending = false;
+document.addEventListener('pointerdown', () => { pointerDown = true; }, true);
+const pointerEnd = () => setTimeout(() => { pointerDown = false; if (adminPending) renderAdmin(); }, 0);
+document.addEventListener('pointerup', pointerEnd, true);
+document.addEventListener('pointercancel', pointerEnd, true);
+
+// 입력칸 하나를 화면이 다시 그려져도 다시 찾을 수 있게 하는 이름
+const fieldKey = x => x.id || (x.dataset.team !== undefined ? 'team' + x.dataset.team + x.dataset.f : null);
 
 function renderAdmin() {
   const el = $('admin');
-  const a = document.activeElement;
-  if (a && el.contains(a) && a.matches('input, textarea')) return; // 입력 중엔 다시 그리지 않음
 
   if (!isAdmin) {
-    el.innerHTML = '<form class="login" id="loginform"><h2>관리자 로그인</h2>' +
-      '<p>점수 입력은 관리자 비밀번호가 있어야 할 수 있어요. 학생들은 전광판과 팀 명단만 볼 수 있습니다.</p>' +
-      '<input type="password" id="pw" autocomplete="current-password" placeholder="관리자 비밀번호" aria-label="관리자 비밀번호" required>' +
-      '<button class="btn primary" type="submit">로그인</button><div class="err" id="loginerr">' + esc(loginError) + '</div></form>';
+    // 비밀번호를 치는 중에 다시 그리면 입력이 지워지므로 로그인 화면은 한 번만 만든다
+    if (!$('loginform')) {
+      el.innerHTML = '<form class="login" id="loginform"><h2>관리자 로그인</h2>' +
+        '<p>점수 입력은 관리자 비밀번호가 있어야 할 수 있어요. 학생들은 전광판과 팀 명단만 볼 수 있습니다.</p>' +
+        '<input type="password" id="pw" autocomplete="current-password" placeholder="관리자 비밀번호" aria-label="관리자 비밀번호" required>' +
+        '<button class="btn primary" type="submit">로그인</button><div class="err" id="loginerr"></div></form>';
+    }
+    $('loginerr').textContent = loginError;
     return;
   }
 
+  // 버튼을 누르는 도중(손가락·마우스를 떼기 전)에 화면을 갈아 끼우면 그 클릭이 사라진다.
+  // 예: 글자칸을 고친 뒤 바로 초기화 버튼을 누르면 칸이 저장되며 다시 그려져 버튼 클릭이 무시됐다
+  if (pointerDown) { adminPending = true; return; }
+  adminPending = false;
+
+  // 항상 최신 점수로 다시 그리되, 글자를 치던 칸은 쓰던 내용과 커서를 그대로 살린다
+  const a = document.activeElement;
+  const typing = a && el.contains(a) && a.matches('input, textarea') ? {
+    key: fieldKey(a), value: a.value,
+    start: a.selectionStart, end: a.selectionEnd,
+  } : null;
+  el.innerHTML = adminHtml();
+  if (typing && typing.key) {
+    const x = [...el.querySelectorAll('input, textarea')].find(n => fieldKey(n) === typing.key);
+    if (x) {
+      x.value = typing.value; x.focus();
+      try { x.setSelectionRange(typing.start, typing.end); } catch (e) {}
+    }
+  }
+}
+
+function adminHtml() {
   const sc = scores(state), t = state.timer;
   let h = '<div class="adminbar">' + (mode === 'local'
     ? '<div class="notice">Firebase가 연결되지 않아 이 기기에만 저장됩니다. 휴대폰에서 함께 보려면 README의 Firebase 연결을 먼저 하세요.</div>'
     : '<span class="rule">관리자로 로그인됨 · 입력하면 모든 화면에 바로 반영됩니다</span><button class="small" data-act="logout">로그아웃</button>') + '</div>';
+  if (flash) h += '<div class="notice' + (flash.bad ? ' warn' : ' ok') + '" role="status">' + esc(flash.text) + '</div>';
 
   h += '<section class="block"><header><h2>타이머</h2><span class="rule">전광판에 크게 표시됩니다 · 노트북에서는 Space 키로 시작·정지</span></header>' +
     '<div class="timerctl"><span class="big" id="i-time">' + fmt(timeLeft()) + '</span>' +
@@ -229,8 +278,10 @@ function renderAdmin() {
   h += '</div></section>';
 
   h += '<section class="block"><header><h2>피구</h2><span class="rule">팀당 한 번씩 3경기 · 승리팀 60점 · 패배팀 20점</span></header>' +
-    '<div class="line" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn" data-act="draw">' +
-    (drawArmed ? '결과가 지워집니다. 한 번 더 누르면 다시 추첨' : '대진 무작위 추첨') + '</button>' +
+    '<div class="line" style="justify-content:flex-start;flex-wrap:wrap">' +
+    (confirming === 'draw'
+      ? '<span class="rule" style="color:var(--fg)">입력한 피구 결과가 지워집니다. 다시 추첨할까요?</span><button class="btn danger" data-act="draw-yes">다시 추첨</button><button class="btn" data-act="cancel">취소</button>'
+      : '<button class="btn" data-act="draw">대진 무작위 추첨</button>') +
     (pairingOk(state.dodge) ? '<span class="rule">6팀 모두 한 번씩 배정됨</span>' : '<span class="rule" style="color:var(--bad)">한 팀이 두 번 나오거나 빠졌어요. 대진을 확인하세요</span>') + '</div><div class="grid">';
   state.dodge.forEach((m, mi) => {
     const A = esc(state.teams[m.a].name), B = esc(state.teams[m.b].name);
@@ -251,8 +302,12 @@ function renderAdmin() {
         : '<label class="line" style="flex-direction:row">명단 없이 인원만<input type="number" min="1" max="20" data-team="' + i + '" data-f="n" value="' + tm.n + '">명</label>') +
       '</div>';
   });
-  h += '</div><div><button class="btn danger" data-act="reset">' + (resetArmed ? '한 번 더 누르면 모든 점수가 지워집니다' : '모든 점수 초기화') + '</button> <span class="rule">팀 이름과 명단은 남습니다</span></div></section>';
-  el.innerHTML = h;
+  h += '</div><div class="line" style="justify-content:flex-start;flex-wrap:wrap">' +
+    (confirming === 'reset'
+      ? '<span class="rule" style="color:var(--fg)">좀비게임·꼬리잡기·피구 결과와 타이머를 모두 지울까요?</span><button class="btn danger" data-act="reset-yes">모두 지우기</button><button class="btn" data-act="cancel">취소</button>'
+      : '<button class="btn danger" data-act="reset">모든 점수 초기화</button>') +
+    '<span class="rule">팀 이름과 명단은 남습니다</span></div></section>';
+  return h;
 }
 
 function render() { renderBoard(); renderRoster(); renderAdmin(); tick(); }
@@ -281,19 +336,26 @@ adminEl.addEventListener('click', e => {
   if (!isAdmin) return;
   const step = (g, i, d) => {
     const n = teamSize(state.teams[i]), v = sv(g, i);
-    g.surv['t' + i] = v !== null ? Math.min(n, Math.max(0, v + d)) : (d > 0 ? n : 0);
+    // 빈칸(–)에서 + 는 전체 인원, − 는 0. 0에서 한 번 더 − 를 누르면 다시 빈칸(미입력)
+    if (v === 0 && d < 0) delete g.surv['t' + i];
+    else g.surv['t' + i] = v !== null ? Math.min(n, Math.max(0, v + d)) : (d > 0 ? n : 0);
   };
-  if (act === 'reset') {
-    if (!resetArmed) { resetArmed = true; renderAdmin(); setTimeout(() => { resetArmed = false; renderAdmin(); }, 4000); return; }
-    resetArmed = false;
+  if (act === 'cancel') { confirming = null; renderAdmin(); return; }
+  if (act === 'reset') { confirming = 'reset'; renderAdmin(); return; }
+  if (act === 'draw' && state.dodge.some(m => m.w)) { confirming = 'draw'; renderAdmin(); return; }
+  if (act === 'reset-yes') {
+    confirming = null;
     state = Object.assign(defaultState(), { title: state.title, teams: state.teams });
+    save('모든 점수를 지웠습니다.');
+    return;
   }
-  else if (act === 'draw') {
-    if (state.dodge.some(m => m.w) && !drawArmed) { drawArmed = true; renderAdmin(); setTimeout(() => { drawArmed = false; renderAdmin(); }, 4000); return; }
-    drawArmed = false;
+  if (act === 'draw' || act === 'draw-yes') {
+    confirming = null;
     state.dodge = drawPairs();
+    save('피구 대진을 새로 추첨했습니다.');
+    return;
   }
-  else if (act === 't-toggle') timerToggle();
+  if (act === 't-toggle') timerToggle();
   else if (act === 't-reset') { t.endsAt = null; t.left = t.dur; }
   else if (act === 't-set') { t.dur = +b.dataset.v; t.left = t.dur; t.endsAt = null; }
   else if (act === 't-add') {
@@ -325,8 +387,6 @@ adminEl.addEventListener('change', e => {
   x.blur(); save();
 });
 adminEl.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input[type="text"], input[type="number"]')) e.target.blur(); });
-// 입력칸에서 빠져나오면 그동안 미뤄 둔 다른 기기의 변경을 다시 그린다
-adminEl.addEventListener('focusout', () => setTimeout(renderAdmin, 0));
 
 /* ---------- 탭 · 전체 화면 · 단축키 ---------- */
 function show(v) {
